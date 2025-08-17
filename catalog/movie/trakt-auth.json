@@ -1,0 +1,13 @@
+{
+  "type": "movie",
+  "id": "trakt-auth",
+  "metas": [
+    {
+      "id": "connect-trakt",
+      "type": "movie",
+      "name": "Connect Trakt",
+      "description": "Open the Trakt login page to link your account.",
+      "behaviorHints": { "defaultVideoId": "connect-trakt" }
+    }
+  ]
+}
