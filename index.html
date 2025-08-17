@@ -1,0 +1,99 @@
+<!doctype html><meta charset="utf-8">
+<title>Vidi × Trakt — Connect</title>
+<style>body{font-family:system-ui;margin:2rem;max-width:760px}.btn{padding:.8rem 1rem;border:1px solid #ccc;border-radius:8px;display:inline-block;text-decoration:none}</style>
+
+<h1>Connect Trakt</h1>
+<p>This links your Vidi app with your Trakt account using Device Flow.</p>
+
+<p>
+  <a class="btn" id="get">Get Device Code</a>
+  <a class="btn" id="activate" target="_blank" rel="noopener">Open trakt.tv/activate</a>
+</p>
+
+<p><b>User Code:</b> <span id="user">----</span></p>
+<p><b>Device Code:</b> <span id="dev">----</span></p>
+
+<p>
+  <a class="btn" id="poll">Start Auto-Poll</a>
+</p>
+
+<pre id="out" style="background:#111;color:#eee;padding:12px;border-radius:8px;min-height:120px"></pre>
+
+<script>
+const BACKEND = "https://vidi-trakt-backend-q2u2.vercel.app/api";     // <-- your backend
+const CLIENT_ID = "85614a3ca3a24906aa30803018774030709c8d1fb284950f9bc57740c6d37b16";                   // <-- your client_id
+
+const $ = s => document.querySelector(s);
+let device_code=null, expiresAt=0, interval=5000;
+
+function log(o){ $('#out').textContent = typeof o==='string'? o : JSON.stringify(o,null,2); }
+
+$('#get').onclick = async ()=>{
+  log({info:"requesting /trakt/device..."});
+  const r = await fetch(`${BACKEND}/trakt/device`, { method:'POST' });
+  const d = await r.json(); log(d);
+  if(r.ok && d.user_code){
+    device_code = d.device_code;
+    interval = (d.interval||5)*1000;
+    expiresAt = Date.now() + (d.expires_in||600)*1000;
+    $('#user').textContent = d.user_code;
+    $('#dev').textContent  = device_code;
+    $('#activate').href    = d.verification_url || 'https://trakt.tv/activate';
+  }
+};
+
+async function pollOnce(){
+  if(!device_code) return log({error:'Get device code first'});
+  if(Date.now()>expiresAt) return log({status:'expired'});
+  const r = await fetch(`${BACKEND}/trakt/poll`, { method:'POST', body:`device_code=${encodeURIComponent(device_code)}` });
+  const p = await r.json(); log(p);
+  if(p.nextPollAddSec) interval += p.nextPollAddSec*1000;
+  if(p.status==='ok' && p.access_token){
+    // Save tokens for later calls from this addon
+    const tokens = { access_token:p.access_token, refresh_token:p.refresh_token, expires_at: Date.now()+p.expires_in*1000 };
+    localStorage.setItem('trakt_tokens_v1', JSON.stringify(tokens));
+
+    // Notify the Vidi app (try multiple bridges; app can listen to any one)
+    const payload = { type:'trakt-auth', tokens };
+    window.parent?.postMessage(payload, '*');                              // generic
+    window.webkit?.messageHandlers?.trakt?.postMessage?.(payload);         // WKWebView
+    try { window.location = `vidi://trakt-auth?access_token=${encodeURIComponent(p.access_token)}&refresh_token=${encodeURIComponent(p.refresh_token)}` } catch(e){}
+
+    // (Optional) show some user data
+    showConnectedData(tokens.access_token);
+  }
+  return p;
+}
+
+$('#poll').onclick = async ()=>{
+  let keep=true;
+  while(keep){
+    const p = await pollOnce();
+    if(!p || p.status==='ok' || p.status==='expired') keep=false;
+    else await new Promise(r=>setTimeout(r, interval));
+  }
+};
+
+async function traktFetch(token, path){
+  const res = await fetch(`https://api.trakt.tv${path}`, {
+    headers: {
+      'Content-Type':'application/json',
+      'trakt-api-version':'2',
+      'trakt-api-key': CLIENT_ID,
+      'Authorization': `Bearer ${token}`
+    }
+  });
+  if(!res.ok) throw new Error('Trakt '+res.status);
+  return res.json();
+}
+
+async function showConnectedData(token){
+  try {
+    const settings = await traktFetch(token, '/users/settings');
+    const user = settings.user?.username || '(unknown)';
+    const wl = await traktFetch(token, '/sync/watchlist');
+    const items = (wl||[]).slice(0,5).map(i => i.movie?.title || i.show?.title || '—').join('\\n');
+    log({ connected_as:user, sample_watchlist: items });
+  } catch(e){ log('Connected, but failed to load sample data: '+e.message); }
+}
+</script>
