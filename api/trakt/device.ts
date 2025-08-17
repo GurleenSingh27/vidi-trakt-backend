@@ -1,11 +1,13 @@
+// api/trakt/device.ts
 export const config = { runtime: 'edge' };
 
+// CORS helper
 function makeCors(origin: string, allowCSV: string, reqHeaders?: string) {
   const list = (allowCSV || '').split(',').map(s => s.trim()).filter(Boolean);
   const ok = allowCSV === '*' || list.includes(origin);
   return {
     'Access-Control-Allow-Origin': ok ? origin : 'null',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',          // <-- only POST + preflight
     'Access-Control-Allow-Headers': reqHeaders || 'Content-Type',
     'Access-Control-Max-Age': '86400',
     'Vary': 'Origin, Access-Control-Request-Headers',
@@ -21,6 +23,7 @@ export default async function handler(req: Request) {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers });
   if (req.method !== 'POST')   return new Response('Method Not Allowed', { status: 405, headers });
 
+  // Call Trakt to get device + user codes
   const r = await fetch('https://api.trakt.tv/oauth/device/code', {
     method: 'POST',
     headers: {
